@@ -315,6 +315,7 @@ thead th.sticky-col,thead th.sticky-col2{z-index:15;background:var(--bg3)}
     <span id="viewer-banner-date" style="font-weight:400;opacity:0.85;font-size:12px"></span>
     <span style="margin-left:auto;font-size:11px;font-weight:400;opacity:0.75">Los datos son una copia estática · los cambios no se guardan</span>
   </div>
+  <div id="periodo-strip" style="display:none;align-items:center;gap:8px;padding:6px 18px;background:var(--card);border-bottom:1px solid var(--border);flex-wrap:wrap"></div>
 
   <!-- TAB: Tabla General -->
   <div class="tab-content active" id="tab-tabla">
@@ -1002,6 +1003,7 @@ const S = {
   ibCostSource: '',
   ibClusterCosts: {},   // {clusterName:{cost,src}}
   // ── Global computation settings ──
+  periodoAnalisis: 'todos', // '3' | '6' | 'ytd' | 'todos' — ventana de meses para promedios
   ceilAvg: true,        // true = Math.ceil en promedios mensuales | false = división exacta
   resumenClient: '',    // cliente seleccionado en tab Resumen ('' = todos)
   resumenMode: 'individual',  // 'individual' | 'compare'
@@ -5163,6 +5165,7 @@ function sbAplicarConfig(cfg){
 
     const aj=porMod(cfg.clientAdj,m.codigo);
     if(Object.keys(aj).length&&(m.pfx==='ob'||m.pfx==='mv')) S[m.pfx+'ClientAdj']=aj;
+    if(m.pfx==='ob'&&cfg.periodoAnalisis) S.periodoAnalisis=cfg.periodoAnalisis;
 
     const sc=porMod(cfg.slotCalc,m.codigo);
     if(Object.keys(sc).length&&(m.pfx==='pm'||m.pfx==='inv')) S[m.pfx+'SlotCalc']=sc;
@@ -5242,6 +5245,198 @@ function sbAplicarModulo(pfx,data){
   return skuCount;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+//  AGREGAR MES — fusiona un archivo nuevo con el historial de Supabase
+//  Sin necesidad de recargar todos los excels anteriores.
+// ══════════════════════════════════════════════════════════════════════
+
+// Detecta si el módulo tiene historial de Supabase cargado en memoria
+function sbTieneHistorial(pfx){
+  return SB.activo && SB.conectado && Object.keys(S[pfx+'SkuData']||{}).length > 0;
+}
+
+// Merge genérico para OB, CD, MV
+// fields: métricas de mes, ej. ['picks','units'] o ['movs','units']
+// Retorna true si se fusionó, false si el usuario canceló
+function sbMergeMonth(pfx, newSkuData, newMonths, fields){
+  const existingMonths = S[pfx+'Months'] || [];
+  const overlap = newMonths.filter(m => existingMonths.includes(m));
+  if(overlap.length){
+    const label = overlap.map(m=>{const p=m.split('-');return(p[1]||'')+'/'+p[0];}).join(', ');
+    if(!confirm('El mes '+label+' ya existe en el historial de Supabase.\n¿Reemplazar esos datos con los del archivo nuevo?')) return false;
+  }
+  // Fusionar SKUs
+  const merged = Object.assign({}, S[pfx+'SkuData']);
+  for(const [key, ns] of Object.entries(newSkuData)){
+    if(!merged[key]){
+      merged[key] = Object.assign({}, ns);
+    } else {
+      const mths = Object.assign({}, merged[key].months);
+      for(const [m,v] of Object.entries(ns.months||{})) mths[m] = v;
+      merged[key] = Object.assign({}, merged[key], {months:mths});
+      if(!merged[key].desc && ns.desc) merged[key].desc = ns.desc;
+      if(!merged[key].empresa && ns.empresa) merged[key].empresa = ns.empresa;
+    }
+  }
+  const allMonths = [...new Set([...existingMonths,...newMonths])].sort();
+  S[pfx+'SkuData'] = merged;
+  S[pfx+'Months']  = allMonths;
+  // Reconstruir clusterData desde los SKUs fusionados
+  const clusters = {};
+  Object.values(merged).forEach(s => {
+    const cl = s.cluster; if(!cl) return;
+    if(!clusters[cl]) clusters[cl] = {name:cl, months:{}};
+    allMonths.forEach(m => {
+      if(!clusters[cl].months[m]){ const e={}; fields.forEach(f=>e[f]=0); clusters[cl].months[m]=e; }
+      fields.forEach(f => { clusters[cl].months[m][f] += (s.months?.[m]?.[f] || 0); });
+    });
+  });
+  S[pfx+'ClusterData'] = clusters;
+  return true;
+}
+
+// Merge para IB (clave compuesta sku|cluster, métricas: lineas/units/recs)
+function sbMergeIbMonth(newSkuData, newMonths){
+  const existingMonths = S.ibMonths || [];
+  const overlap = newMonths.filter(m => existingMonths.includes(m));
+  if(overlap.length){
+    const label = overlap.map(m=>{const p=m.split('-');return(p[1]||'')+'/'+p[0];}).join(', ');
+    if(!confirm('El mes '+label+' ya existe en el historial Inbound de Supabase.\n¿Reemplazar esos datos con los del archivo nuevo?')) return false;
+  }
+  const merged = Object.assign({}, S.ibSkuData);
+  for(const [key, ns] of Object.entries(newSkuData)){
+    if(!merged[key]){
+      merged[key] = Object.assign({}, ns);
+    } else {
+      const mths = Object.assign({}, merged[key].months);
+      for(const [m,v] of Object.entries(ns.months||{})) mths[m] = v;
+      let tl=0,tu=0,tr=0;
+      Object.values(mths).forEach(mv=>{tl+=mv.lineas||0;tu+=mv.units||0;tr+=mv.recs||0;});
+      merged[key] = Object.assign({}, merged[key], {months:mths, lineas:tl, units:tu, recepciones:tr});
+    }
+  }
+  const allMonths = [...new Set([...existingMonths,...newMonths])].sort();
+  S.ibSkuData  = merged;
+  S.ibMonths   = allMonths;
+  // Reconstruir clusterData IB
+  const clusters = {};
+  Object.values(merged).forEach(s => {
+    const cl = s.cluster; if(!cl) return;
+    if(!clusters[cl]) clusters[cl] = {lineas:0,units:0,recepciones:0,months:{}};
+    allMonths.forEach(m => {
+      if(!clusters[cl].months[m]) clusters[cl].months[m] = {lineas:0,units:0};
+      const mv = s.months?.[m]; if(!mv) return;
+      clusters[cl].months[m].lineas += mv.lineas||0;
+      clusters[cl].months[m].units  += mv.units||0;
+      clusters[cl].lineas      += mv.lineas||0;
+      clusters[cl].units       += mv.units||0;
+      clusters[cl].recepciones += mv.recs||0;
+    });
+  });
+  S.ibClusterData = clusters;
+  return true;
+}
+
+// ── Auto-guardar módulo en Supabase (sin crear snapshot nuevo) ─────
+// Borra solo ese módulo en el snapshot activo y re-sube los datos.
+// Se llama automáticamente después de cada merge exitoso.
+async function sbGuardarModulo(pfx, modCodigo){
+  if(!SB.activo||!SB.conectado||!SB.snapshotId) return;
+  if(!sbPuedeEscribir()){
+    toast('Conectate como admin para que los cambios se guarden en Supabase','error',6000);
+    return;
+  }
+  const sku=S[pfx+'SkuData']||{};
+  const cl =S[pfx+'ClusterData']||{};
+  toast('💾 Guardando '+modCodigo+' en Supabase...','info',20000);
+  try{
+    // 1. Borrar datos anteriores del módulo (cascade borra sku_mes y cluster_mes)
+    await sbRpc('api_limpiar_modulo',{p_snapshot_id:SB.snapshotId,p_modulo:modCodigo});
+    // 2. Subir clusters
+    if(Object.keys(cl).length){
+      await sbRpc('api_cargar_clusters',{p_snapshot_id:SB.snapshotId,p_modulo:modCodigo,p_datos:cl});
+    }
+    // 3. Subir SKUs en lotes de 500
+    const LOTE=500;
+    const claves=Object.keys(sku);
+    for(let i=0;i<claves.length;i+=LOTE){
+      const lote={};
+      for(const k of claves.slice(i,i+LOTE)) lote[k]=sku[k];
+      await sbRpc('api_cargar_skus',{p_snapshot_id:SB.snapshotId,p_modulo:modCodigo,p_datos:lote});
+    }
+    toast('✅ '+modCodigo+' guardado en Supabase ('+claves.length.toLocaleString('es-CR')+' SKUs)','success',5000);
+    log('ok','Supabase: auto-guardado '+modCodigo+' — '+claves.length+' SKUs en snapshot #'+SB.snapshotId);
+  }catch(e){
+    toast('⚠️ Error al guardar '+modCodigo+' en Supabase: '+e.message,'error',8000);
+    log('err','Supabase auto-guardar '+modCodigo+': '+e.message);
+  }
+}
+
+// ── Período de análisis — meses activos para promedios ────────────
+// Devuelve el subconjunto de S[pfx+'Months'] según S.periodoAnalisis
+function getActiveMeses(pfx){
+  const all=(S[pfx+'Months']||[]).slice().sort();
+  const p=S.periodoAnalisis||'todos';
+  if(p==='todos'||!all.length) return all;
+  if(p==='ytd'){
+    const yr=new Date().getFullYear().toString();
+    const ytd=all.filter(m=>m.startsWith(yr));
+    return ytd.length?ytd:all;
+  }
+  const n=parseInt(p);
+  if(!isNaN(n)&&n>0) return all.slice(-n);
+  return all;
+}
+
+// Cambia el período globalmente y re-renderiza todos los módulos activos
+function setPeriodo(p){
+  S.periodoAnalisis=p;
+  saveState();
+  renderPeriodoStrip();
+  renderOutbound();
+  renderCrossdock();
+  renderMovimientos();
+  renderInbound();
+}
+
+// Renderiza la barra de período de análisis
+function renderPeriodoStrip(){
+  const strip=document.getElementById('periodo-strip');
+  if(!strip) return;
+  // Detectar si hay algún módulo con meses cargados
+  const hasMeses=['ob','cd','mv','ib'].some(pfx=>(S[pfx+'Months']||[]).length>0);
+  strip.style.display=hasMeses?'flex':'none';
+  if(!hasMeses) return;
+  const p=S.periodoAnalisis||'todos';
+  // Calcular rango activo (unión de todos los módulos)
+  const allM=[...new Set(['ob','cd','mv','ib'].flatMap(pfx=>S[pfx+'Months']||[]))].sort();
+  const opts=[
+    {k:'3',label:'3 meses'},
+    {k:'6',label:'6 meses'},
+    {k:'ytd',label:'YTD'},
+    {k:'todos',label:'Todos'},
+  ];
+  // Rango actual
+  let rangoLabel='';
+  if(allM.length){
+    const fmt=m=>{const pp=m.split('-');return(pp[1]||'')+'/'+pp[0].slice(2);};
+    if(p==='todos') rangoLabel=fmt(allM[0])+'–'+fmt(allM[allM.length-1]);
+    else if(p==='ytd'){
+      const yr=new Date().getFullYear().toString();
+      const ytd=allM.filter(m=>m.startsWith(yr));
+      if(ytd.length) rangoLabel=fmt(ytd[0])+'–'+fmt(ytd[ytd.length-1]);
+    } else {
+      const n=parseInt(p);
+      if(!isNaN(n)){const sl=allM.slice(-n);if(sl.length)rangoLabel=fmt(sl[0])+'–'+fmt(sl[sl.length-1]);}
+    }
+  }
+  strip.innerHTML=`
+    <span style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">📅 Período de análisis:</span>
+    ${opts.map(o=>`<button onclick="setPeriodo('${o.k}')" style="padding:3px 11px;border-radius:20px;border:1.5px solid ${p===o.k?'var(--accent)':'var(--border)'};background:${p===o.k?'var(--accent)':'transparent'};color:${p===o.k?'#fff':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer">${o.label}</button>`).join('')}
+    ${rangoLabel?`<span style="font-size:11px;color:var(--text3);margin-left:4px">${rangoLabel}</span>`:''}
+  `;
+}
+
 // ── Carga completa desde Supabase ──────────────────────────────────
 async function sbCargarTodo({snapshotId=null,silencioso=false}={}){
   const t0=Date.now();
@@ -5311,6 +5506,7 @@ async function sbCargarTodo({snapshotId=null,silencioso=false}={}){
   log('ok','Supabase: snapshot '+cfg.snapshotId+' ("'+(cfg.etiqueta||'sin etiqueta')+'") — '+
       totalSkus.toLocaleString('es-CR')+' SKUs en '+modulosOk+' módulos ('+seg+'s)');
   if(!silencioso) toast('Datos cargados — '+totalSkus.toLocaleString('es-CR')+' SKUs','success',4000);
+  renderPeriodoStrip();
   return {snapshotId:cfg.snapshotId,totalSkus,modulosOk};
 }
 
@@ -5350,6 +5546,7 @@ function sbPayloadConfig(pfx){
   p.zonaMap     =S[pfx+'ZonaMap']||{};
   if(pfx==='ob'||pfx==='mv') p.clientAdj=S[pfx+'ClientAdj']||{};
   if(pfx==='pm'||pfx==='inv') p.slotCalc=S[pfx+'SlotCalc']||{};
+  if(pfx==='ob') p.periodoAnalisis=S.periodoAnalisis||'todos'; // global — guardado en OB
   if(pfx==='ib') p.ciaFactors=S.ibCiaFactors||{};
   if(pfx==='pm'){
     const dc={};
@@ -6422,21 +6619,32 @@ function processObData(raw,colMap,cols,fileName){
       }
 
       // All rows done — finalize
-      S.obMonths=[...monthSet].sort();
-      S.obSkuData=skuData;
-      S.obClusterData=clusterData;
+      const newObMonths=[...monthSet].sort();
+      const sbMergeOb=sbTieneHistorial('ob');
+      if(sbMergeOb){
+        if(!sbMergeMonth('ob',skuData,newObMonths,['picks','units'])){
+          toast('Carga cancelada','info'); return;
+        }
+      } else {
+        S.obMonths=newObMonths;
+        S.obSkuData=skuData;
+        S.obClusterData=clusterData;
+      }
       const ciaColName=colMap.cia||'(no detectada)';
       const ciaSamples=[...new Set(raw.slice(0,200).map(r=>String(r[colMap.cia]??'').trim()).filter(Boolean))].slice(0,5);
-      const ciaSkusWithEmpresa=Object.values(skuData).filter(s=>s.empresa).length;
+      const ciaSkusWithEmpresa=Object.values(S.obSkuData).filter(s=>s.empresa).length;
+      const totalObPicks=Object.values(S.obSkuData).reduce((t,s)=>t+Object.values(s.months||{}).reduce((a,m)=>a+(m.picks||0),0),0);
       S.obFileInfo={
-        name:fileName,rows:raw.length,picks,skus:Object.keys(skuData).length,
+        name:sbMergeOb?'Supabase + '+fileName:fileName,
+        rows:sbMergeOb?Object.keys(S.obSkuData).length:raw.length,
+        picks:totalObPicks,skus:Object.keys(S.obSkuData).length,
         skippedTipo,skippedDate,skippedSku,
         meses:S.obMonths.map(m=>{const p=m.split('-');return(OB_MESES[p[1]]||p[1])+' '+p[0];}).join(', '),
         zonas:[...zonaSet].sort().join(', '),
         cols,ciaCol:ciaColName,ciaSamples,ciaSkusWithEmpresa
       };
 
-      if(!picks){
+      if(!totalObPicks){
         let hint='';
         if(skippedDate===raw.length)hint=' — todas las fechas fallaron el parseo';
         else if(skippedTipo===raw.length)hint=' — todos los tipos fueron filtrados (tipos en archivo: '+S.obAllTipos.join(', ')+')';
@@ -6444,11 +6652,14 @@ function processObData(raw,colMap,cols,fileName){
         S.obSubTab='cfg';
       } else {
         S.obSubTab='resumen';
-        toast('"'+fileName+'" — '+picks.toLocaleString()+' picks · '+Object.keys(skuData).length.toLocaleString()+' SKUs · '+S.obMonths.length+' mes(es)','success');
+        const tag=sbMergeOb?' ✅ fusionado con Supabase':'';
+        toast('"'+fileName+'" — '+totalObPicks.toLocaleString()+' picks · '+Object.keys(S.obSkuData).length.toLocaleString()+' SKUs · '+S.obMonths.length+' mes(es)'+tag,'success');
       }
       obAutoSync(); // sync automático → Tabla General (antes de saveState para que filesMeta incluya ob_sel_auto)
       saveState();
+      renderPeriodoStrip();
       renderOutbound();
+      if(sbMergeOb) sbGuardarModulo('ob','outbound'); // auto-guardar en Supabase
     }catch(ex){
       toast('Error al procesar archivo: '+ex.message,'error');
       console.error('processObData error:',ex);
@@ -6459,7 +6670,7 @@ function processObData(raw,colMap,cols,fileName){
 
 // ── Distribution calculation ─────────────────────────────────
 function calcObDistribution(){
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   if(!months.length)return{dist:{},totAvg:0,totPicks:0};
   const dist={};
   let totAvg=0,totPicks=0;
@@ -7786,19 +7997,20 @@ function cdGetSelectedMacroVals(clusterName){
 // ── Distribution — base: promedio de movimientos por mes ──────
 function calcCdDistribution(){
   const dist={};
-  const nMonths=S.cdMonths.length||1;
+  const activeCd=getActiveMeses('cd');
+  const nMonths=activeCd.length||1;
   const clusters=[...new Set(Object.values(S.cdSkuData).map(s=>s.cluster).filter(Boolean))];
   clusters.forEach(cl=>{
     const cc=cdGetCC(cl);
     const cost=cc.cost||0;
     const skus=Object.values(S.cdSkuData).filter(s=>s.cluster===cl);
-    const totMovs=skus.reduce((a,s)=>a+S.cdMonths.reduce((b,m)=>b+(s.months[m]?.movs||0),0),0);
-    const totUnits=skus.reduce((a,s)=>a+S.cdMonths.reduce((b,m)=>b+(s.months[m]?.units||0),0),0);
+    const totMovs=skus.reduce((a,s)=>a+activeCd.reduce((b,m)=>b+(s.months[m]?.movs||0),0),0);
+    const totUnits=skus.reduce((a,s)=>a+activeCd.reduce((b,m)=>b+(s.months[m]?.units||0),0),0);
     const avgMovs=(totMovs>0)?avgC(totMovs, nMonths):0;
     const avgUnits=(totUnits>0)?avgC(totUnits, nMonths):0;
     // sumAvgMovs = Σ ceil(movs_i/nMonths) para todos los SKUs del cluster
     const sumAvgMovs=skus.reduce((a,s)=>{
-      const m=S.cdMonths.reduce((b,mo)=>b+(s.months[mo]?.movs||0),0);
+      const m=activeCd.reduce((b,mo)=>b+(s.months[mo]?.movs||0),0);
       return a+(m>0?avgC(m, nMonths):0);
     },0);
     const cmov=sumAvgMovs>0?cost/sumAvgMovs:0; // costo constante por movimiento promedio de SKU
@@ -7863,25 +8075,35 @@ function processCdData(raw,fileName,isCsv){
     skuData[sku].months[mes].units+=cant;
     processed++;
   }
-  S.cdSkuData=skuData;
-  S.cdMonths=[...monthSet].sort();
-  const clusters={};
-  Object.values(skuData).forEach(s=>{
-    if(!clusters[s.cluster])clusters[s.cluster]={name:s.cluster,months:{}};
-    S.cdMonths.forEach(m=>{
-      if(!clusters[s.cluster].months[m])clusters[s.cluster].months[m]={movs:0,units:0};
-      clusters[s.cluster].months[m].movs+=(s.months[m]?.movs||0);
-      clusters[s.cluster].months[m].units+=(s.months[m]?.units||0);
+  const newCdMonths=[...monthSet].sort();
+  const sbMergeCd=sbTieneHistorial('cd');
+  if(sbMergeCd){
+    if(!sbMergeMonth('cd',skuData,newCdMonths,['movs','units'])){
+      toast('Carga cancelada','info'); return;
+    }
+  } else {
+    S.cdSkuData=skuData;
+    S.cdMonths=newCdMonths;
+    const clusters={};
+    Object.values(skuData).forEach(s=>{
+      if(!clusters[s.cluster])clusters[s.cluster]={name:s.cluster,months:{}};
+      S.cdMonths.forEach(m=>{
+        if(!clusters[s.cluster].months[m])clusters[s.cluster].months[m]={movs:0,units:0};
+        clusters[s.cluster].months[m].movs+=(s.months[m]?.movs||0);
+        clusters[s.cluster].months[m].units+=(s.months[m]?.units||0);
+      });
     });
-  });
-  S.cdClusterData=clusters;
-  S.cdFileInfo={name:fileName,rows:processed,skipped,skus:Object.keys(skuData).length,meses:S.cdMonths.length,zonas:[...new Set(Object.values(skuData).map(s=>s.zona))].sort().join(', ')};
+    S.cdClusterData=clusters;
+  }
+  S.cdFileInfo={name:sbMergeCd?'Supabase + '+fileName:fileName,rows:sbMergeCd?Object.keys(S.cdSkuData).length:processed,skipped,skus:Object.keys(S.cdSkuData).length,meses:S.cdMonths.length,zonas:[...new Set(Object.values(S.cdSkuData).map(s=>s.zona))].sort().join(', ')};
   S.cdSubTab='resumen';
   idbPut('cd_main',{months:S.cdMonths,skuData:S.cdSkuData,clusterData:S.cdClusterData});
-  toast(`"${fileName}" — ${processed.toLocaleString()} movs · ${Object.keys(skuData).length.toLocaleString()} SKUs · ${S.cdMonths.length} mes(es)`,'success');
+  const tagCd=sbMergeCd?' ✅ fusionado con Supabase':'';
+  toast(`"${fileName}" — ${Object.keys(S.cdSkuData).length.toLocaleString()} SKUs · ${S.cdMonths.length} mes(es)${tagCd}`,'success');
   cdAutoSync();
   saveState();
   renderCrossdock();
+  if(sbMergeCd) sbGuardarModulo('cd','crossdock'); // auto-guardar en Supabase
 }
 
 // ── Auto-sync Crossdock → Tabla General ──────────────────────
@@ -9631,19 +9853,20 @@ function mvGetCC(c){return S.mvClusterCosts[c]||{cost:0,src:''};}
 // ── Distribution — base: promedio de movimientos por mes ─────
 function calcMvDistribution(){
   const dist={};
-  const nMonths=S.mvMonths.length||1;
+  const activeMv=getActiveMeses('mv');
+  const nMonths=activeMv.length||1;
   const clusters=[...new Set(Object.values(S.mvSkuData).map(s=>s.cluster).filter(Boolean))];
   clusters.forEach(cl=>{
     const cc=mvGetCC(cl);
     const cost=cc.cost||0;
     const skus=Object.values(S.mvSkuData).filter(s=>s.cluster===cl);
-    const totMovs=skus.reduce((a,s)=>a+S.mvMonths.reduce((b,m)=>b+(s.months[m]?.movs||0),0),0);
-    const totUnits=skus.reduce((a,s)=>a+S.mvMonths.reduce((b,m)=>b+(s.months[m]?.units||0),0),0);
+    const totMovs=skus.reduce((a,s)=>a+activeMv.reduce((b,m)=>b+(s.months[m]?.movs||0),0),0);
+    const totUnits=skus.reduce((a,s)=>a+activeMv.reduce((b,m)=>b+(s.months[m]?.units||0),0),0);
     const avgMovs=(totMovs>0)?avgC(totMovs, nMonths):0;
     const avgUnits=(totUnits>0)?avgC(totUnits, nMonths):0;
     // sumAvgMovs = Σ ceil(movs_i/nMonths) para todos los SKUs del cluster
     const sumAvgMovs=skus.reduce((a,s)=>{
-      const m=S.mvMonths.reduce((b,mo)=>b+(s.months[mo]?.movs||0),0);
+      const m=activeMv.reduce((b,mo)=>b+(s.months[mo]?.movs||0),0);
       return a+(m>0?avgC(m, nMonths):0);
     },0);
     const cmov=sumAvgMovs>0?cost/sumAvgMovs:0; // costo constante por movimiento promedio de SKU
@@ -9710,26 +9933,36 @@ function processMvData(raw,fileName,isCsv){
     skuData[sku].months[mes].units+=cant; // suma de Cantidad = unidades
     processed++;
   }
-  S.mvSkuData=skuData;
-  S.mvMonths=[...monthSet].sort();
-  const clusters={};
-  Object.values(skuData).forEach(s=>{
-    if(!clusters[s.cluster])clusters[s.cluster]={name:s.cluster,months:{}};
-    S.mvMonths.forEach(m=>{
-      if(!clusters[s.cluster].months[m])clusters[s.cluster].months[m]={movs:0,units:0};
-      clusters[s.cluster].months[m].movs+=(s.months[m]?.movs||0);
-      clusters[s.cluster].months[m].units+=(s.months[m]?.units||0);
+  const newMvMonths=[...monthSet].sort();
+  const sbMergeMv=sbTieneHistorial('mv');
+  if(sbMergeMv){
+    if(!sbMergeMonth('mv',skuData,newMvMonths,['movs','units'])){
+      toast('Carga cancelada','info'); return;
+    }
+  } else {
+    S.mvSkuData=skuData;
+    S.mvMonths=newMvMonths;
+    const clusters={};
+    Object.values(skuData).forEach(s=>{
+      if(!clusters[s.cluster])clusters[s.cluster]={name:s.cluster,months:{}};
+      S.mvMonths.forEach(m=>{
+        if(!clusters[s.cluster].months[m])clusters[s.cluster].months[m]={movs:0,units:0};
+        clusters[s.cluster].months[m].movs+=(s.months[m]?.movs||0);
+        clusters[s.cluster].months[m].units+=(s.months[m]?.units||0);
+      });
     });
-  });
-  S.mvClusterData=clusters;
-  S.mvFileInfo={name:fileName,rows:processed,skipped,skus:Object.keys(skuData).length,meses:S.mvMonths.length,
-    zonas:[...new Set(Object.values(skuData).map(s=>s.zona))].sort().join(', ')};
+    S.mvClusterData=clusters;
+  }
+  S.mvFileInfo={name:sbMergeMv?'Supabase + '+fileName:fileName,rows:sbMergeMv?Object.keys(S.mvSkuData).length:processed,skipped,skus:Object.keys(S.mvSkuData).length,meses:S.mvMonths.length,
+    zonas:[...new Set(Object.values(S.mvSkuData).map(s=>s.zona))].sort().join(', ')};
   S.mvSubTab='resumen';
   idbPut('mv_main',{months:S.mvMonths,skuData:S.mvSkuData,clusterData:S.mvClusterData});
-  toast(`"${fileName}" — ${processed.toLocaleString()} DESTINO movs · ${Object.keys(skuData).length.toLocaleString()} SKUs · ${S.mvMonths.length} mes(es)`,'success');
+  const tagMv=sbMergeMv?' ✅ fusionado con Supabase':'';
+  toast(`"${fileName}" — ${Object.keys(S.mvSkuData).length.toLocaleString()} SKUs · ${S.mvMonths.length} mes(es)${tagMv}`,'success');
   mvAutoSync();
   saveState();
   renderMovimientos();
+  if(sbMergeMv) sbGuardarModulo('mv','movimientos'); // auto-guardar en Supabase
 }
 
 // ── Auto-sync Movimientos → Tabla General ────────────────────
@@ -11364,28 +11597,30 @@ function ibGetCiaFactors(){
 // ── Distribution ─────────────────────────────────────────────
 function calcIbDistribution(){
   const dist={};
-  const nMonths=S.ibMonths.length||1;
+  const activeIb=getActiveMeses('ib');
+  const nMonths=activeIb.length||1;
+  const skuLineas=s=>activeIb.reduce((b,m)=>b+(s.months[m]?.lineas||0),0);
+  const skuUnits=s=>activeIb.reduce((b,m)=>b+(s.months[m]?.units||0),0);
+  const skuRecs=s=>activeIb.reduce((b,m)=>b+(s.months[m]?.recs||0),0);
   const clusters=[...new Set(Object.values(S.ibSkuData).map(s=>s.cluster).filter(Boolean))];
   const ciaFactors=ibGetCiaFactors();
   clusters.forEach(cl=>{
     const cc=ibGetCC(cl);
     const cost=cc.cost||0;
     const skus=Object.values(S.ibSkuData).filter(s=>s.cluster===cl);
-    const totLineas=skus.reduce((a,s)=>a+s.lineas,0);
-    const totUnits=skus.reduce((a,s)=>a+s.units,0);
-    const totRecs=skus.reduce((a,s)=>a+s.recepciones,0);
+    const totLineas=skus.reduce((a,s)=>a+skuLineas(s),0);
+    const totUnits=skus.reduce((a,s)=>a+skuUnits(s),0);
+    const totRecs=skus.reduce((a,s)=>a+skuRecs(s),0);
     // sumAvgLineas = Σ ceil(lineas_i/nMonths) — denominador correcto para pct constante
-    const sumAvgLineas=skus.reduce((a,s)=>a+(s.lineas>0?avgC(s.lineas, nMonths):0),0);
+    const sumAvgLineas=skus.reduce((a,s)=>{const l=skuLineas(s);return a+(l>0?avgC(l,nMonths):0);},0);
     // CIA map: { ciaId → { ciaAvgLines, ciaCost } }
-    // ciaCost = clusterCost × (factor / sumFactorsPresentes)
-    // Permite que un cluster tenga solo una CIA y aun así funcione.
     let ciaMap=null;
     if(ciaFactors && cost>0){
-      // ciaAvgMap: Σ ceil(lineas_i/nMonths) por CIA (denominador correcto para pct_cia constante)
       const ciaAvgMap={};
       skus.forEach(s=>{
         const k=s.empresa||'_other';
-        ciaAvgMap[k]=(ciaAvgMap[k]||0)+(s.lineas>0?avgC(s.lineas, nMonths):0);
+        const l=skuLineas(s);
+        ciaAvgMap[k]=(ciaAvgMap[k]||0)+(l>0?avgC(l,nMonths):0);
       });
       const usedCias=Object.keys(ciaAvgMap);
       const totalFactor=usedCias.reduce((s,k)=>s+(ciaFactors[k]?ciaFactors[k].factor:0),0)||1;
@@ -11395,16 +11630,16 @@ function calcIbDistribution(){
         ciaMap[k]={ciaAvgLines:ciaAvgMap[k],ciaCost:cost*(fac/totalFactor)};
       });
     }
-    // Weighted lines for cross-cluster distribution % (unchanged logic)
+    // Weighted lines for cross-cluster distribution %
     let weightedLineas=totLineas;
     if(ciaFactors){
       weightedLineas=0;
       skus.forEach(s=>{
         const fac=ciaFactors[s.empresa||'']?ciaFactors[s.empresa].factor:1;
-        weightedLineas+=s.lineas*fac;
+        weightedLineas+=skuLineas(s)*fac;
       });
     }
-    const clin=sumAvgLineas>0?cost/sumAvgLineas:0; // costo constante por línea promedio de SKU
+    const clin=sumAvgLineas>0?cost/sumAvgLineas:0;
     dist[cl]={cost,totLineas,totUnits,totRecs,sumAvgLineas,weightedLineas,clin,ciaMap};
   });
   const totWeight=Object.values(dist).reduce((a,r)=>a+r.weightedLineas,0);
@@ -11413,8 +11648,10 @@ function calcIbDistribution(){
 }
 // Helper: calcula costo SKU respetando factor CIA — usa promedios ceil'd para pct constante
 function ibCalcSkuCost(s,r){
-  const nM=S.ibMonths.length||1;
-  const avgLineas=s.lineas>0?avgC(s.lineas, nM):0;
+  const activeIbC=getActiveMeses('ib');
+  const nM=activeIbC.length||1;
+  const activeLineas=activeIbC.reduce((b,m)=>b+(s.months[m]?.lineas||0),0);
+  const avgLineas=activeLineas>0?avgC(activeLineas,nM):0;
   // pctCluster: para display en tabla (proporción sobre suma de promedios del cluster)
   const pctCluster=r.sumAvgLineas>0?avgLineas/r.sumAvgLineas:0;
   if(r.ciaMap&&r.cost>0){
@@ -11557,18 +11794,27 @@ function processIbData(raw,fileName){
     clusterDataClean[cl]={lineas:cd.lineas,units:cd.units,recepciones:cd.recSet.size,months:cleanMonths};
   });
 
-  const months=[...monthSet].filter(m=>m>='2026-01').sort();
-  S.ibSkuData=skuDataClean;
-  S.ibClusterData=clusterDataClean;
-  S.ibMonths=months;
-  S.ibFileInfo={name:fileName,rows:totalRows,skipped,
-    skus:Object.keys(skuDataClean).length,
-    clusters:Object.keys(clusterDataClean).length,
-    months:months.length};
+  const newIbMonths=[...monthSet].filter(m=>m>='2026-01').sort();
+  const sbMergeIb=SB.activo&&SB.conectado&&Object.keys(S.ibSkuData||{}).length>0;
+  if(sbMergeIb){
+    if(!sbMergeIbMonth(skuDataClean,newIbMonths)){
+      toast('Carga cancelada','info'); return;
+    }
+  } else {
+    S.ibSkuData=skuDataClean;
+    S.ibClusterData=clusterDataClean;
+    S.ibMonths=newIbMonths;
+  }
+  S.ibFileInfo={name:sbMergeIb?'Supabase + '+fileName:fileName,rows:totalRows,skipped,
+    skus:Object.keys(S.ibSkuData).length,
+    clusters:Object.keys(S.ibClusterData).length,
+    months:S.ibMonths.length};
   saveState();
-  toast(`✅ Inbound cargado: ${totalRows.toLocaleString()} líneas · ${Object.keys(clusterDataClean).length} clusters · ${months.length} meses`,'success',5000);
+  const tagIb=sbMergeIb?' ✅ fusionado con Supabase':'';
+  toast(`✅ Inbound cargado: ${Object.keys(S.ibSkuData).length.toLocaleString()} SKUs · ${Object.keys(S.ibClusterData).length} clusters · ${S.ibMonths.length} meses${tagIb}`,'success',5000);
   ibAutoSync();
   renderInbound();
+  if(sbMergeIb) sbGuardarModulo('ib','inbound'); // auto-guardar en Supabase
 }
 
 // ── Navigation ────────────────────────────────────────────────
