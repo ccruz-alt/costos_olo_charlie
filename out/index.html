@@ -5382,25 +5382,17 @@ function toggleMesPeriodo(mes){
   const allM=[...new Set(['ob','cd','mv','ib'].flatMap(pfx=>S[pfx+'Months']||[]))].sort();
   let current;
   if(Array.isArray(p)){
+    // En modo custom: agregar/quitar el mes
     current=[...p];
+    if(current.includes(mes)) current=current.filter(m=>m!==mes);
+    else current=[...current,mes].sort();
+    if(!current.length) return; // no permitir selección vacía
   } else {
-    // Expandir el preset actual a lista de meses
-    if(p==='todos') current=[...allM];
-    else if(p==='ytd'){
-      const yr=new Date().getFullYear().toString();
-      current=allM.filter(m=>m.startsWith(yr));
-      if(!current.length) current=[...allM];
-    } else {
-      const n=parseInt(p);
-      current=(!isNaN(n)&&n>0)?allM.slice(-n):[...allM];
-    }
+    // Desde un preset: entrar a modo custom con solo este mes seleccionado
+    current=[mes];
   }
-  if(current.includes(mes)) current=current.filter(m=>m!==mes);
-  else current=[...current,mes].sort();
-  if(!current.length) return; // no permitir selección vacía
-  // Si quedaron todos los meses, volver a 'todos'
   const sorted=[...current].sort();
-  const allSorted=[...allM].sort();
+  const allSorted=[...allM];
   const isAll=sorted.length===allSorted.length&&sorted.every((m,i)=>m===allSorted[i]);
   setPeriodo(isAll?'todos':sorted);
 }
@@ -5422,12 +5414,22 @@ function renderPeriodoStrip(){
     {k:'todos',label:'Todos'},
   ];
   // Meses activos en la selección actual (para resaltar chips individuales)
-  // En modo custom: mostrar cuáles están seleccionados. En modo preset: todos neutros (clickeables para entrar a modo custom)
-  const selectedSet=new Set(isCustom?p:[]);
+  // Calcular qué meses están activos en el preset actual (para mostrar tint suave)
+  const presetSet=new Set(!isCustom?(()=>{
+    if(p==='todos') return allM;
+    if(p==='ytd'){const yr=new Date().getFullYear().toString();const y=allM.filter(m=>m.startsWith(yr));return y.length?y:allM;}
+    const n=parseInt(p);return(!isNaN(n)&&n>0)?allM.slice(-n):allM;
+  })():[]);
+  const customSet=new Set(isCustom?p:[]);
   const fmtLabel=m=>{const pp=m.split('-');return(OB_MESES[pp[1]]||pp[1])+"'"+pp[0].slice(2);};
   const monthChips=allM.map(m=>{
-    const sel=isCustom&&selectedSet.has(m);
-    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="padding:2px 9px;border-radius:12px;border:1.5px solid ${sel?'var(--accent)':isCustom?'var(--border)':'var(--border)'};background:${sel?'var(--accent)':'transparent'};color:${sel?'#fff':'var(--text2)'};font-size:11px;font-weight:${sel?'700':'500'};cursor:pointer;white-space:nowrap;transition:all .15s">${fmtLabel(m)}</button>`;
+    const inPreset=!isCustom&&presetSet.has(m);
+    const inCustom=isCustom&&customSet.has(m);
+    let bg,border,color,fw;
+    if(inCustom){bg='var(--accent)';border='var(--accent)';color='#fff';fw='700';}
+    else if(inPreset){bg='color-mix(in srgb,var(--accent) 18%,transparent)';border='var(--accent)';color='var(--accent)';fw='600';}
+    else{bg='transparent';border='var(--border)';color='var(--text3)';fw='400';}
+    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="padding:2px 9px;border-radius:12px;border:1.5px solid ${border};background:${bg};color:${color};font-size:11px;font-weight:${fw};cursor:pointer;white-space:nowrap;transition:all .15s">${fmtLabel(m)}</button>`;
   }).join('');
   strip.innerHTML=`
     <span style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">📅 Período:</span>
