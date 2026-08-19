@@ -4840,6 +4840,26 @@ function recomputeAllMacroCosts(){
   ibAutoSync();
 }
 
+// Versión ligera: solo actualiza cc.cost sin llamar autoSync
+// Usar cuando el período cambia — los renders que siguen ya usan los costos actualizados
+function recomputeMacroCostsOnly(){
+  const macroRows=getObMacroRows();
+  const macroOpts=getObMacroCostOptions();
+  const maps=[S.obClusterCosts,S.cdClusterCosts,S.mvClusterCosts,S.pmClusterCosts,S.invClusterCosts,S.ibClusterCosts];
+  for(const costsObj of maps){
+    for(const cc of Object.values(costsObj||{})){
+      if(!cc)continue;
+      if(cc.src==='macro_rows'){
+        const sel=new Set(cc.selectedRows||[]);
+        if(sel.size)cc.cost=macroRows.filter(r=>sel.has(r.key)).reduce((s,r)=>s+r.total,0);
+      } else if(cc.src?.startsWith('macro:')){
+        const opt=macroOpts.find(o=>o.col===cc.src.slice('macro:'.length));
+        if(opt)cc.cost=opt.sum;
+      }
+    }
+  }
+}
+
 // ── Actualizar archivo macro en-place (preserva fid, config, summaryLinks, fórmulas) ──
 function refreshMacroData(fid){
   const f=S.files[fid];
@@ -5394,8 +5414,8 @@ function getActiveMeses(pfx){
 // Cambia el período globalmente y re-renderiza todos los módulos activos
 function setPeriodo(p){
   S.periodoAnalisis=p;
-  // Recalcular costos de cluster desde histórico macro (si existe) con el nuevo período
-  if(S.macroByMonth&&Object.keys(S.macroByMonth).length>0) recomputeAllMacroCosts();
+  // Actualizar costos de cluster desde histórico macro con el nuevo período (sin autoSync)
+  if(S.macroByMonth&&Object.keys(S.macroByMonth).length>0) recomputeMacroCostsOnly();
   saveState();
   renderPeriodoStrip();
   renderOutbound();
