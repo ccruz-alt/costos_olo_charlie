@@ -5425,15 +5425,25 @@ function renderPeriodoStrip(){
   const monthChips=allM.map(m=>{
     const inPreset=!isCustom&&presetSet.has(m);
     const inCustom=isCustom&&customSet.has(m);
-    let bg,border,color,fw;
-    if(inCustom){bg='var(--accent)';border='var(--accent)';color='#fff';fw='700';}
-    else if(inPreset){bg='color-mix(in srgb,var(--accent) 18%,transparent)';border='var(--accent)';color='var(--accent)';fw='600';}
-    else{bg='transparent';border='var(--border)';color='var(--text3)';fw='400';}
-    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="padding:2px 9px;border-radius:12px;border:1.5px solid ${border};background:${bg};color:${color};font-size:11px;font-weight:${fw};cursor:pointer;white-space:nowrap;transition:all .15s">${fmtLabel(m)}</button>`;
+    let chipStyle;
+    if(inCustom){
+      // Seleccionado en modo custom: fondo sólido verde oscuro + texto blanco
+      chipStyle='padding:2px 9px;border-radius:12px;border:2px solid #0d9488;background:#0d9488;color:#fff;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 0 0 2px #0d948840';
+    } else if(inPreset){
+      // Incluido en preset: borde accent + texto accent, fondo leve
+      chipStyle='padding:2px 9px;border-radius:12px;border:1.5px solid #0d9488;background:#ccfbf1;color:#0d9488;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap';
+    } else {
+      // Excluido del período actual
+      chipStyle='padding:2px 9px;border-radius:12px;border:1.5px solid #d1d5db;background:transparent;color:#9ca3af;font-size:11px;font-weight:400;cursor:pointer;white-space:nowrap';
+    }
+    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="${chipStyle}">${inCustom?'✓ ':''} ${fmtLabel(m)}</button>`;
   }).join('');
+  // Label de meses activos en modo custom
+  const customLabel=isCustom&&customSet.size>0
+    ?`<span style="font-size:11px;color:#0d9488;font-weight:600;white-space:nowrap;margin-left:4px">(${customSet.size} mes${customSet.size>1?'es':''})</span>`:'';
   strip.innerHTML=`
     <span style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">📅 Período:</span>
-    ${opts.map(o=>`<button onclick="setPeriodo('${o.k}')" style="padding:3px 10px;border-radius:20px;border:1.5px solid ${(!isCustom&&p===o.k)?'var(--accent)':'var(--border)'};background:${(!isCustom&&p===o.k)?'var(--accent)':'transparent'};color:${(!isCustom&&p===o.k)?'#fff':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer">${o.label}</button>`).join('')}
+    ${opts.map(o=>`<button onclick="setPeriodo('${o.k}')" style="padding:3px 10px;border-radius:20px;border:1.5px solid ${(!isCustom&&p===o.k)?'var(--accent)':'var(--border)'};background:${(!isCustom&&p===o.k)?'var(--accent)':'transparent'};color:${(!isCustom&&p===o.k)?'#fff':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer">${o.label}</button>`).join('')}${customLabel}
     <span style="color:var(--border);margin:0 4px;align-self:center">|</span>
     ${monthChips}
   `;
