@@ -8334,11 +8334,12 @@ function buildCdClusterRows(clusterName){
   // FIX sort: usar safeKey consistentemente con cdSortBy
   const safeKey=clusterName.replace(/[^a-z0-9]/gi,'_');
   const calcCols=cdGetClusterCalcCols(clusterName);
-  const nMonths=S.cdMonths.length||1;
+  const activeCd=getActiveMeses('cd');
+  const nMonths=activeCd.length||1;
   const allSkus=Object.values(S.cdSkuData).filter(s=>s.cluster===clusterName);
   const rowData=allSkus.map(s=>{
-    const movs=S.cdMonths.reduce((a,m)=>a+(s.months[m]?.movs||0),0);
-    const units=S.cdMonths.reduce((a,m)=>a+(s.months[m]?.units||0),0);
+    const movs=activeCd.reduce((a,m)=>a+(s.months[m]?.movs||0),0);
+    const units=activeCd.reduce((a,m)=>a+(s.months[m]?.units||0),0);
     const avgMovs=(movs>0)?avgC(movs, nMonths):0;
     const avgUnits=(units>0)?avgC(units, nMonths):0;
     const pct=r.sumAvgMovs>0?avgMovs/r.sumAvgMovs:0;
@@ -10227,14 +10228,15 @@ function buildMvClusterRows(clusterName){
   if(!r)return{html:'',count:0};
   const safeKey=clusterName.replace(/[^a-z0-9]/gi,'_');
   const calcCols=mvGetClusterCalcCols(clusterName);
-  const nMonths=S.mvMonths.length||1;
+  const activeMv=getActiveMeses('mv');
+  const nMonths=activeMv.length||1;
   const allSkus=Object.values(S.mvSkuData).filter(s=>s.cluster===clusterName);
 
   // Pre-compute per-clientGroup pct sums for this cluster (for client adjustments)
   const mvCpSumsLocal={};
   if(S.mvClientAdj?.[clusterName]?.length){
     allSkus.forEach(s=>{
-      const totM=S.mvMonths.reduce((a,m)=>a+(s.months[m]?.movs||0),0);
+      const totM=activeMv.reduce((a,m)=>a+(s.months[m]?.movs||0),0);
       const avgM=(totM>0)?avgC(totM,nMonths):0;
       const pMv=r.sumAvgMovs>0?avgM/r.sumAvgMovs:0;
       const cg=getClientGroup(s.empresa)||s.empresa||'';
@@ -10243,8 +10245,8 @@ function buildMvClusterRows(clusterName){
   }
 
   const rowData=allSkus.map(s=>{
-    const movs=S.mvMonths.reduce((a,m)=>a+(s.months[m]?.movs||0),0);
-    const units=S.mvMonths.reduce((a,m)=>a+(s.months[m]?.units||0),0);
+    const movs=activeMv.reduce((a,m)=>a+(s.months[m]?.movs||0),0);
+    const units=activeMv.reduce((a,m)=>a+(s.months[m]?.units||0),0);
     const avgMovs=(movs>0)?avgC(movs, nMonths):0;
     const avgUnits=(units>0)?avgC(units, nMonths):0;
     const pct=r.sumAvgMovs>0?avgMovs/r.sumAvgMovs:0; // distribución por suma de promedios SKU
