@@ -5337,39 +5337,15 @@ function sbMergeIbMonth(newSkuData, newMonths){
   return true;
 }
 
-// ── Auto-guardar módulo en Supabase (sin crear snapshot nuevo) ─────
-// Borra solo ese módulo en el snapshot activo y re-sube los datos.
-// Se llama automáticamente después de cada merge exitoso.
+// ── Auto-publicar a Supabase después de merge ───────────────────────
+// Usa el mismo flujo seguro de sbPublicar (crea snapshot nuevo,
+// sube todo, activa solo si todo OK). Sin riesgo de perder datos.
 async function sbGuardarModulo(pfx, modCodigo){
-  if(!SB.activo||!SB.conectado||!SB.snapshotId) return;
-  if(!sbPuedeEscribir()){
-    toast('Conectate como admin para que los cambios se guarden en Supabase','error',6000);
-    return;
-  }
-  const sku=S[pfx+'SkuData']||{};
-  const cl =S[pfx+'ClusterData']||{};
-  toast('💾 Guardando '+modCodigo+' en Supabase...','info',20000);
-  try{
-    // 1. Borrar datos anteriores del módulo (cascade borra sku_mes y cluster_mes)
-    await sbRpc('api_limpiar_modulo',{p_snapshot_id:SB.snapshotId,p_modulo:modCodigo});
-    // 2. Subir clusters
-    if(Object.keys(cl).length){
-      await sbRpc('api_cargar_clusters',{p_snapshot_id:SB.snapshotId,p_modulo:modCodigo,p_datos:cl});
-    }
-    // 3. Subir SKUs en lotes de 500
-    const LOTE=500;
-    const claves=Object.keys(sku);
-    for(let i=0;i<claves.length;i+=LOTE){
-      const lote={};
-      for(const k of claves.slice(i,i+LOTE)) lote[k]=sku[k];
-      await sbRpc('api_cargar_skus',{p_snapshot_id:SB.snapshotId,p_modulo:modCodigo,p_datos:lote});
-    }
-    toast('✅ '+modCodigo+' guardado en Supabase ('+claves.length.toLocaleString('es-CR')+' SKUs)','success',5000);
-    log('ok','Supabase: auto-guardado '+modCodigo+' — '+claves.length+' SKUs en snapshot #'+SB.snapshotId);
-  }catch(e){
-    toast('⚠️ Error al guardar '+modCodigo+' en Supabase: '+e.message,'error',8000);
-    log('err','Supabase auto-guardar '+modCodigo+': '+e.message);
-  }
+  if(!SB.activo||!SB.conectado||!sbPuedeEscribir()) return;
+  const now=new Date();
+  const meses=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const etiqueta='Auto · '+meses[now.getMonth()]+' '+now.getFullYear()+' ('+modCodigo+')';
+  await sbPublicar(etiqueta);
 }
 
 // ── Período de análisis — meses activos para promedios ────────────
@@ -5609,14 +5585,18 @@ async function sbSincronizar(){
 }
 
 // Publica TODO el estado del panel como un snapshot nuevo
-async function sbPublicar(){
+async function sbPublicar(etiquetaAuto){
   if(!sbPuedeEscribir()){
     toast('Necesitás conectarte como admin de Supabase para publicar','error',6000);
     return;
   }
-  const etiqueta=prompt('Nombre para este snapshot:',
-    'Panel '+new Date().toISOString().slice(0,10));
-  if(etiqueta===null) return;
+  let etiqueta;
+  if(etiquetaAuto){
+    etiqueta=etiquetaAuto;
+  } else {
+    etiqueta=prompt('Nombre para este snapshot:','Panel '+new Date().toISOString().slice(0,10));
+    if(etiqueta===null) return;
+  }
 
   const btn=document.getElementById('btnSbPublicar');
   const prog=document.getElementById('sbProgreso');
