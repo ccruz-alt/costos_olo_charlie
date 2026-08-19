@@ -5353,6 +5353,7 @@ async function sbGuardarModulo(pfx, modCodigo){
 function getActiveMeses(pfx){
   const all=(S[pfx+'Months']||[]).slice().sort();
   const p=S.periodoAnalisis||'todos';
+  if(Array.isArray(p)) return all.filter(m=>p.includes(m));
   if(p==='todos'||!all.length) return all;
   if(p==='ytd'){
     const yr=new Date().getFullYear().toString();
@@ -5375,41 +5376,67 @@ function setPeriodo(p){
   renderInbound();
 }
 
+// Togglea un mes individual (modo custom)
+function toggleMesPeriodo(mes){
+  const p=S.periodoAnalisis||'todos';
+  const allM=[...new Set(['ob','cd','mv','ib'].flatMap(pfx=>S[pfx+'Months']||[]))].sort();
+  let current;
+  if(Array.isArray(p)){
+    current=[...p];
+  } else {
+    // Expandir el preset actual a lista de meses
+    if(p==='todos') current=[...allM];
+    else if(p==='ytd'){
+      const yr=new Date().getFullYear().toString();
+      current=allM.filter(m=>m.startsWith(yr));
+      if(!current.length) current=[...allM];
+    } else {
+      const n=parseInt(p);
+      current=(!isNaN(n)&&n>0)?allM.slice(-n):[...allM];
+    }
+  }
+  if(current.includes(mes)) current=current.filter(m=>m!==mes);
+  else current=[...current,mes].sort();
+  if(!current.length) return; // no permitir selección vacía
+  // Si quedaron todos los meses, volver a 'todos'
+  const sorted=[...current].sort();
+  const allSorted=[...allM].sort();
+  const isAll=sorted.length===allSorted.length&&sorted.every((m,i)=>m===allSorted[i]);
+  setPeriodo(isAll?'todos':sorted);
+}
+
 // Renderiza la barra de período de análisis
 function renderPeriodoStrip(){
   const strip=document.getElementById('periodo-strip');
   if(!strip) return;
-  // Detectar si hay algún módulo con meses cargados
   const hasMeses=['ob','cd','mv','ib'].some(pfx=>(S[pfx+'Months']||[]).length>0);
   strip.style.display=hasMeses?'flex':'none';
   if(!hasMeses) return;
   const p=S.periodoAnalisis||'todos';
-  // Calcular rango activo (unión de todos los módulos)
   const allM=[...new Set(['ob','cd','mv','ib'].flatMap(pfx=>S[pfx+'Months']||[]))].sort();
+  const isCustom=Array.isArray(p);
   const opts=[
-    {k:'3',label:'3 meses'},
-    {k:'6',label:'6 meses'},
+    {k:'3',label:'3m'},
+    {k:'6',label:'6m'},
     {k:'ytd',label:'YTD'},
     {k:'todos',label:'Todos'},
   ];
-  // Rango actual
-  let rangoLabel='';
-  if(allM.length){
-    const fmt=m=>{const pp=m.split('-');return(pp[1]||'')+'/'+pp[0].slice(2);};
-    if(p==='todos') rangoLabel=fmt(allM[0])+'–'+fmt(allM[allM.length-1]);
-    else if(p==='ytd'){
-      const yr=new Date().getFullYear().toString();
-      const ytd=allM.filter(m=>m.startsWith(yr));
-      if(ytd.length) rangoLabel=fmt(ytd[0])+'–'+fmt(ytd[ytd.length-1]);
-    } else {
-      const n=parseInt(p);
-      if(!isNaN(n)){const sl=allM.slice(-n);if(sl.length)rangoLabel=fmt(sl[0])+'–'+fmt(sl[sl.length-1]);}
-    }
-  }
+  // Meses activos en la selección actual (para resaltar chips individuales)
+  const activosSet=new Set(isCustom?p:(()=>{
+    if(p==='todos') return allM;
+    if(p==='ytd'){const yr=new Date().getFullYear().toString();const y=allM.filter(m=>m.startsWith(yr));return y.length?y:allM;}
+    const n=parseInt(p);return(!isNaN(n)&&n>0)?allM.slice(-n):allM;
+  })());
+  const fmtLabel=m=>{const pp=m.split('-');return(OB_MESES[pp[1]]||pp[1])+"'"+pp[0].slice(2);};
+  const monthChips=allM.map(m=>{
+    const on=activosSet.has(m);
+    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="padding:2px 8px;border-radius:12px;border:1.5px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent)':'transparent'};color:${on?'#fff':'var(--text2)'};font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">${fmtLabel(m)}</button>`;
+  }).join('');
   strip.innerHTML=`
-    <span style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">📅 Período de análisis:</span>
-    ${opts.map(o=>`<button onclick="setPeriodo('${o.k}')" style="padding:3px 11px;border-radius:20px;border:1.5px solid ${p===o.k?'var(--accent)':'var(--border)'};background:${p===o.k?'var(--accent)':'transparent'};color:${p===o.k?'#fff':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer">${o.label}</button>`).join('')}
-    ${rangoLabel?`<span style="font-size:11px;color:var(--text3);margin-left:4px">${rangoLabel}</span>`:''}
+    <span style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">📅 Período:</span>
+    ${opts.map(o=>`<button onclick="setPeriodo('${o.k}')" style="padding:3px 10px;border-radius:20px;border:1.5px solid ${(!isCustom&&p===o.k)?'var(--accent)':'var(--border)'};background:${(!isCustom&&p===o.k)?'var(--accent)':'transparent'};color:${(!isCustom&&p===o.k)?'#fff':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer">${o.label}</button>`).join('')}
+    <span style="color:var(--border);margin:0 2px">|</span>
+    ${monthChips}
   `;
 }
 
