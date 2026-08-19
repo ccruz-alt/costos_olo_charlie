@@ -315,7 +315,7 @@ thead th.sticky-col,thead th.sticky-col2{z-index:15;background:var(--bg3)}
     <span id="viewer-banner-date" style="font-weight:400;opacity:0.85;font-size:12px"></span>
     <span style="margin-left:auto;font-size:11px;font-weight:400;opacity:0.75">Los datos son una copia estática · los cambios no se guardan</span>
   </div>
-  <div id="periodo-strip" style="display:none;align-items:center;gap:8px;padding:6px 18px;background:var(--card);border-bottom:1px solid var(--border);flex-wrap:wrap"></div>
+  <div id="periodo-strip" style="display:none;align-items:center;gap:6px 8px;padding:7px 18px;background:var(--card);border-bottom:1px solid var(--border);flex-wrap:wrap;row-gap:6px"></div>
 
   <!-- TAB: Tabla General -->
   <div class="tab-content active" id="tab-tabla">
@@ -5422,20 +5422,17 @@ function renderPeriodoStrip(){
     {k:'todos',label:'Todos'},
   ];
   // Meses activos en la selección actual (para resaltar chips individuales)
-  const activosSet=new Set(isCustom?p:(()=>{
-    if(p==='todos') return allM;
-    if(p==='ytd'){const yr=new Date().getFullYear().toString();const y=allM.filter(m=>m.startsWith(yr));return y.length?y:allM;}
-    const n=parseInt(p);return(!isNaN(n)&&n>0)?allM.slice(-n):allM;
-  })());
+  // En modo custom: mostrar cuáles están seleccionados. En modo preset: todos neutros (clickeables para entrar a modo custom)
+  const selectedSet=new Set(isCustom?p:[]);
   const fmtLabel=m=>{const pp=m.split('-');return(OB_MESES[pp[1]]||pp[1])+"'"+pp[0].slice(2);};
   const monthChips=allM.map(m=>{
-    const on=activosSet.has(m);
-    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="padding:2px 8px;border-radius:12px;border:1.5px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent)':'transparent'};color:${on?'#fff':'var(--text2)'};font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">${fmtLabel(m)}</button>`;
+    const sel=isCustom&&selectedSet.has(m);
+    return`<button onclick="toggleMesPeriodo('${m}')" title="${m}" style="padding:2px 9px;border-radius:12px;border:1.5px solid ${sel?'var(--accent)':isCustom?'var(--border)':'var(--border)'};background:${sel?'var(--accent)':'transparent'};color:${sel?'#fff':'var(--text2)'};font-size:11px;font-weight:${sel?'700':'500'};cursor:pointer;white-space:nowrap;transition:all .15s">${fmtLabel(m)}</button>`;
   }).join('');
   strip.innerHTML=`
     <span style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">📅 Período:</span>
     ${opts.map(o=>`<button onclick="setPeriodo('${o.k}')" style="padding:3px 10px;border-radius:20px;border:1.5px solid ${(!isCustom&&p===o.k)?'var(--accent)':'var(--border)'};background:${(!isCustom&&p===o.k)?'var(--accent)':'transparent'};color:${(!isCustom&&p===o.k)?'#fff':'var(--text2)'};font-size:12px;font-weight:600;cursor:pointer">${o.label}</button>`).join('')}
-    <span style="color:var(--border);margin:0 2px">|</span>
+    <span style="color:var(--border);margin:0 4px;align-self:center">|</span>
     ${monthChips}
   `;
 }
