@@ -5626,7 +5626,7 @@ async function sbPublicar(etiquetaAuto){
     }});
 
     // Datos de cada módulo, por lotes
-    const LOTE=500;
+    const LOTE=200;
     let hechos=0;
     const totalSkus=SB_MODULOS.reduce((s,m)=>s+Object.keys(S[m.pfx+'SkuData']||{}).length,0);
 
@@ -6006,7 +6006,7 @@ function obSortTh(tabKey,col,label,isR=false){
 function obBuildSampleVars(clusterName){
   const{dist}=calcObDistribution();
   const r=dist[clusterName]||{totPicks:0,cost:0,cpick:0,avgPicks:0,avgUnits:0};
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   // Use first SKU of this cluster as sample
   const sampleSku=Object.values(S.obSkuData).find(s=>s.cluster===clusterName);
   const picks=sampleSku?months.reduce((a,m)=>a+(sampleSku.months[m]?.picks||0),0):Math.round(r.totPicks/Math.max(1,Object.values(S.obSkuData).filter(s=>s.cluster===clusterName).length));
@@ -6723,7 +6723,7 @@ function renderObContent(){
 // ── Resumen tab ──────────────────────────────────────────────
 function buildObResumen(){
   const{dist,totAvg,totPicks}=calcObDistribution();
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   if(!months.length){
     return`<div style="padding:60px 20px;text-align:center;color:var(--text3)">
       <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 16px;display:block;opacity:.25"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
@@ -6873,7 +6873,7 @@ function obBuildClusterRows(clusterName){
   const{dist}=calcObDistribution();
   const r=dist[clusterName];
   if(!r)return{html:'',count:0};
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   const calcCols=obGetClusterCalcCols(clusterName);
   const color=OB_CLUSTER_COLORS[clusterName]||'#64748b';
   const cc=obGetCC(clusterName);
@@ -7012,7 +7012,7 @@ function buildObCluster(clusterName){
   const r=dist[clusterName];
   if(!r)return`<div style="padding:40px;text-align:center;color:var(--text3)">Sin datos de distribución.</div>`;
 
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   const mLabels=months.map(m=>{const p=m.split('-');return OB_MESES[p[1]]||p[1];});
   const col=OB_CLUSTER_COLORS[clusterName]||'#64748b';
   const cc=obGetCC(clusterName);
@@ -7539,7 +7539,7 @@ function obClearFormulas(){
 
 // ── Export CSV ───────────────────────────────────────────────
 function exportObClusterCSV(clusterName){
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   if(!months.length){toast('Sin datos para exportar','warning');return;}
   const {dist}=calcObDistribution();
   const r=dist[clusterName];
@@ -7657,7 +7657,7 @@ function xlsxDownload(rows,filename){
 
 // ── Outbound — Resumen XLSX ───────────────────────────────────
 function exportObResumenXLSX(){
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   if(!months.length){toast('Sin datos para exportar','warning');return;}
   const{dist}=calcObDistribution();
   const mLabels=months.map(m=>{const p=m.split('-');return(OB_MESES[p[1]]||p[1])+'_'+p[0];});
@@ -7676,7 +7676,7 @@ function exportObResumenXLSX(){
 
 // ── Outbound — Cluster XLSX ───────────────────────────────────
 function exportObClusterXLSX(clusterName){
-  const months=S.obMonths;
+  const months=getActiveMeses('ob');
   if(!months.length){toast('Sin datos','warning');return;}
   const{dist}=calcObDistribution();
   const r=dist[clusterName];
@@ -7711,7 +7711,7 @@ function exportObClusterXLSX(clusterName){
 function exportCdResumenXLSX(){
   if(!Object.keys(S.cdSkuData).length){toast('Sin datos','warning');return;}
   const{dist}=calcCdDistribution();
-  const months=S.cdMonths;
+  const months=getActiveMeses('cd');
   const mLabels=months.map(m=>CD_MESES[m.slice(5)]||m);
   const totMovsAll=Object.values(dist).reduce((a,r)=>a+r.totMovs,0);
   const totUnitsAll=Object.values(dist).reduce((a,r)=>a+r.totUnits,0);
@@ -7735,7 +7735,7 @@ function exportCdClusterXLSX(clusterName){
   const{dist}=calcCdDistribution();
   const r=dist[clusterName];
   if(!r){toast('Cluster no encontrado','warning');return;}
-  const months=S.cdMonths;
+  const months=getActiveMeses('cd');
   const mLabels=months.map(m=>CD_MESES[m.slice(5)]||m);
   const calcCols=cdGetClusterCalcCols(clusterName);
   const headers=['SKU','Descripción','Empresa',...mLabels,'Total Movs','Total Unid','Prom.Movs/Mes','Prom.Unid/Mes','% Cluster','Costo SKU','$/Mov',...calcCols.map(c=>c.label)];
@@ -7766,7 +7766,7 @@ function exportCdClusterXLSX(clusterName){
 function exportMvResumenXLSX(){
   if(!Object.keys(S.mvSkuData).length){toast('Sin datos','warning');return;}
   const{dist}=calcMvDistribution();
-  const months=S.mvMonths;
+  const months=getActiveMeses('mv');
   const mLabels=months.map(m=>MV_MESES[m.slice(5)]||m);
   const totMovsAll=Object.values(dist).reduce((a,r)=>a+r.totMovs,0);
   const totUnitsAll=Object.values(dist).reduce((a,r)=>a+r.totUnits,0);
@@ -7790,7 +7790,7 @@ function exportMvClusterXLSX(clusterName){
   const{dist}=calcMvDistribution();
   const r=dist[clusterName];
   if(!r){toast('Cluster no encontrado','warning');return;}
-  const months=S.mvMonths;
+  const months=getActiveMeses('mv');
   const mLabels=months.map(m=>MV_MESES[m.slice(5)]||m);
   const calcCols=mvGetClusterCalcCols(clusterName);
   const headers=['SKU','Descripción','Empresa',...mLabels,'Total Movs','Total Unid','Prom.Movs/Mes','Prom.Unid/Mes','% Cluster','Costo SKU','$/Mov',...calcCols.map(c=>c.label)];
@@ -8258,8 +8258,10 @@ function buildCdResumen(){
     </div>`;
   }
   const{dist}=calcCdDistribution();
-  const totalMovs=S.cdMonths.reduce((a,m)=>a+Object.values(S.cdSkuData).reduce((b,s)=>b+(s.months[m]?.movs||0),0),0);
-  const totalUnits=S.cdMonths.reduce((a,m)=>a+Object.values(S.cdSkuData).reduce((b,s)=>b+(s.months[m]?.units||0),0),0);
+  const activeCd=getActiveMeses('cd');
+  const nCd=activeCd.length||1;
+  const totalMovs=activeCd.reduce((a,m)=>a+Object.values(S.cdSkuData).reduce((b,s)=>b+(s.months[m]?.movs||0),0),0);
+  const totalUnits=activeCd.reduce((a,m)=>a+Object.values(S.cdSkuData).reduce((b,s)=>b+(s.months[m]?.units||0),0),0);
   const totalCost=Object.values(dist).reduce((a,r)=>a+r.cost,0);
   const fi=S.cdFileInfo;
   // Summary cards
@@ -8268,7 +8270,7 @@ function buildCdResumen(){
       {label:'SKUs únicos',val:Object.keys(S.cdSkuData).length.toLocaleString(),icon:'📦'},
       {label:'Movimientos',val:totalMovs.toLocaleString(),icon:'🔄'},
       {label:'Unidades',val:totalUnits.toLocaleString(),icon:'📊'},
-      {label:'Meses',val:S.cdMonths.length,icon:'📅'},
+      {label:'Meses (período)',val:nCd,icon:'📅'},
       {label:'Costo total',val:fmtCd(totalCost),icon:'💰'},
       {label:'Clusters',val:Object.keys(S.cdClusterData).length,icon:'🗂️'},
     ].map(c=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
@@ -8278,12 +8280,12 @@ function buildCdResumen(){
     </div>`).join('')}
   </div>`;
   // Cluster table
-  const thM=S.cdMonths.map(m=>`<th style="text-align:right;padding:9px 8px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;background:var(--bg3);border-bottom:2px solid var(--border);white-space:nowrap">${CD_MESES[m.slice(5)]||m}</th>`).join('');
+  const thM=activeCd.map(m=>`<th style="text-align:right;padding:9px 8px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;background:var(--bg3);border-bottom:2px solid var(--border);white-space:nowrap">${CD_MESES[m.slice(5)]||m}</th>`).join('');
   const sortS=S.cdSortMap['resumen']||{col:'movs',dir:-1};
   const clRows=Object.entries(S.cdClusterData).map(([cl,cd])=>{
     const r=dist[cl]||{cost:0,totMovs:0,totUnits:0,cmov:0};
-    const avgMovs=(r.totMovs>0&&S.cdMonths.length)?avgC(r.totMovs, S.cdMonths.length):0;
-    const avgUnits=(r.totUnits>0&&S.cdMonths.length)?avgC(r.totUnits, S.cdMonths.length):0;
+    const avgMovs=(r.totMovs>0)?avgC(r.totMovs, nCd):0;
+    const avgUnits=(r.totUnits>0)?avgC(r.totUnits, nCd):0;
     const pct=totalMovs>0?r.totMovs/totalMovs:0;
     return{cl,cd,r,avgMovs,avgUnits,pct,movs:r.totMovs,units:r.totUnits,cost:r.cost};
   }).sort((a,b)=>{const v=sortS.dir;return v*(b[sortS.col]??0)-(v*(a[sortS.col]??0));});
@@ -8291,7 +8293,7 @@ function buildCdResumen(){
     const color=getCdColor(cl);
     const cc=cdGetCC(cl);
     const hasCost=cc.cost>0;
-    const mCells=S.cdMonths.map(m=>`<td style="text-align:right;padding:8px;font-size:12px">${(cd.months[m]?.movs||0).toLocaleString()}</td>`).join('');
+    const mCells=activeCd.map(m=>`<td style="text-align:right;padding:8px;font-size:12px">${(cd.months[m]?.movs||0).toLocaleString()}</td>`).join('');
     return`<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 10px;font-size:13px;font-weight:700">
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px"></span>${esc(cl)}
@@ -8306,9 +8308,9 @@ function buildCdResumen(){
   }).join('');
   const totRow=`<tr style="border-top:2px solid var(--border);background:var(--bg3);font-weight:700">
     <td style="padding:8px 10px;font-size:13px">TOTAL</td>
-    ${S.cdMonths.map(m=>{const mv=Object.values(S.cdClusterData).reduce((a,cd)=>a+(cd.months[m]?.movs||0),0);return`<td style="text-align:right;padding:8px;font-size:12px">${mv.toLocaleString()}</td>`;}).join('')}
-    <td style="text-align:right;padding:8px;font-size:12px">${(totalMovs>0?avgC(totalMovs, S.cdMonths.length||1):0).toLocaleString()}</td>
-    <td style="text-align:right;padding:8px;font-size:12px">${(totalUnits>0?avgC(totalUnits, S.cdMonths.length||1):0).toLocaleString()}</td>
+    ${activeCd.map(m=>{const mv=Object.values(S.cdClusterData).reduce((a,cd)=>a+(cd.months[m]?.movs||0),0);return`<td style="text-align:right;padding:8px;font-size:12px">${mv.toLocaleString()}</td>`;}).join('')}
+    <td style="text-align:right;padding:8px;font-size:12px">${(totalMovs>0?avgC(totalMovs, nCd):0).toLocaleString()}</td>
+    <td style="text-align:right;padding:8px;font-size:12px">${(totalUnits>0?avgC(totalUnits, nCd):0).toLocaleString()}</td>
     <td style="text-align:right;padding:8px;font-size:12px">100%</td>
     <td></td>
     <td style="text-align:right;padding:8px;font-size:12px;color:var(--green)">${fmtCd(totalCost)}</td>
@@ -10155,15 +10157,17 @@ function buildMvResumen(){
     </div>`;
   }
   const{dist}=calcMvDistribution();
-  const totalMovs=S.mvMonths.reduce((a,m)=>a+Object.values(S.mvSkuData).reduce((b,s)=>b+(s.months[m]?.movs||0),0),0);
-  const totalUnits=S.mvMonths.reduce((a,m)=>a+Object.values(S.mvSkuData).reduce((b,s)=>b+(s.months[m]?.units||0),0),0);
+  const activeMv=getActiveMeses('mv');
+  const nMv=activeMv.length||1;
+  const totalMovs=activeMv.reduce((a,m)=>a+Object.values(S.mvSkuData).reduce((b,s)=>b+(s.months[m]?.movs||0),0),0);
+  const totalUnits=activeMv.reduce((a,m)=>a+Object.values(S.mvSkuData).reduce((b,s)=>b+(s.months[m]?.units||0),0),0);
   const totalCost=Object.values(dist).reduce((a,r)=>a+r.cost,0);
   const cards=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">
     ${[
       {label:'SKUs únicos',val:Object.keys(S.mvSkuData).length.toLocaleString(),icon:'📦'},
       {label:'Movimientos Destino',val:totalMovs.toLocaleString(),icon:'🚚'},
       {label:'Unidades',val:totalUnits.toLocaleString(),icon:'📊'},
-      {label:'Meses',val:S.mvMonths.length,icon:'📅'},
+      {label:'Meses (período)',val:nMv,icon:'📅'},
       {label:'Costo total',val:fmtMv(totalCost),icon:'💰'},
       {label:'Clusters',val:Object.keys(S.mvClusterData).length,icon:'🗂️'},
     ].map(c=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
@@ -10172,7 +10176,7 @@ function buildMvResumen(){
       <div style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase">${c.label}</div>
     </div>`).join('')}
   </div>`;
-  const thM=S.mvMonths.map(m=>`<th style="text-align:right;padding:9px 8px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;background:var(--bg3);border-bottom:2px solid var(--border);white-space:nowrap">${MV_MESES[m.slice(5)]||m}</th>`).join('');
+  const thM=activeMv.map(m=>`<th style="text-align:right;padding:9px 8px;font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;background:var(--bg3);border-bottom:2px solid var(--border);white-space:nowrap">${MV_MESES[m.slice(5)]||m}</th>`).join('');
   const sortS=S.mvSortMap['resumen']||{col:'movs',dir:-1};
   const clRows=Object.entries(S.mvClusterData).map(([cl,cd])=>{
     const r=dist[cl]||{cost:0,totMovs:0,totUnits:0,cmov:0,avgMovs:0,avgUnits:0};
@@ -10183,7 +10187,7 @@ function buildMvResumen(){
     const color=getMvColor(cl);
     const cc=mvGetCC(cl);
     const hasCost=cc.cost>0;
-    const mCells=S.mvMonths.map(m=>`<td style="text-align:right;padding:8px;font-size:12px">${(cd.months[m]?.movs||0).toLocaleString()}</td>`).join('');
+    const mCells=activeMv.map(m=>`<td style="text-align:right;padding:8px;font-size:12px">${(cd.months[m]?.movs||0).toLocaleString()}</td>`).join('');
     return`<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 10px;font-size:13px;font-weight:700">
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px"></span>${esc(cl)}
@@ -10198,9 +10202,9 @@ function buildMvResumen(){
   }).join('');
   const totRow=`<tr style="border-top:2px solid var(--border);background:var(--bg3);font-weight:700">
     <td style="padding:8px 10px;font-size:13px">TOTAL</td>
-    ${S.mvMonths.map(m=>{const mv=Object.values(S.mvClusterData).reduce((a,cd)=>a+(cd.months[m]?.movs||0),0);return`<td style="text-align:right;padding:8px;font-size:12px">${mv.toLocaleString()}</td>`;}).join('')}
-    <td style="text-align:right;padding:8px;font-size:12px">${(totalMovs>0?avgC(totalMovs, S.mvMonths.length||1):0).toLocaleString()}</td>
-    <td style="text-align:right;padding:8px;font-size:12px">${(totalUnits>0?avgC(totalUnits, S.mvMonths.length||1):0).toLocaleString()}</td>
+    ${activeMv.map(m=>{const mv=Object.values(S.mvClusterData).reduce((a,cd)=>a+(cd.months[m]?.movs||0),0);return`<td style="text-align:right;padding:8px;font-size:12px">${mv.toLocaleString()}</td>`;}).join('')}
+    <td style="text-align:right;padding:8px;font-size:12px">${(totalMovs>0?avgC(totalMovs, nMv):0).toLocaleString()}</td>
+    <td style="text-align:right;padding:8px;font-size:12px">${(totalUnits>0?avgC(totalUnits, nMv):0).toLocaleString()}</td>
     <td style="text-align:right;padding:8px;font-size:12px">100%</td>
     <td></td>
     <td style="text-align:right;padding:8px;font-size:12px;color:var(--green)">${fmtMv(totalCost)}</td>
@@ -11844,7 +11848,7 @@ function buildIbResumen(){
     </div>`;
   }
   const{dist}=calcIbDistribution();
-  const months=S.ibMonths;
+  const months=getActiveMeses('ib');
   const totalLineas=Object.values(S.ibClusterData).reduce((a,cd)=>a+cd.lineas,0);
   const totalUnits=Object.values(S.ibClusterData).reduce((a,cd)=>a+cd.units,0);
   const totalRecs=Object.values(dist).reduce((a,r)=>a+r.totRecs,0);
@@ -11936,7 +11940,7 @@ function buildIbClusterRows(clusterName){
   if(!r)return{html:'',count:0};
   const safeKey=clusterName.replace(/[^a-z0-9]/gi,'_');
   const calcCols=ibGetClusterCalcCols(clusterName);
-  const months=S.ibMonths;
+  const months=getActiveMeses('ib');
   const allSkus=Object.values(S.ibSkuData).filter(s=>s.cluster===clusterName);
   const macroVars=ibGetMacroColVars(clusterName);
   const nMR=months.length||1;
@@ -12056,7 +12060,7 @@ function buildIbCluster(clusterName){
   const page=S.ibPageMap[safeKey]||0;
   const paginationHtml=buildIbPagination(safeKey,page,totalPages);
   const cEsc=clusterName.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-  const months=S.ibMonths;
+  const months=getActiveMeses('ib');
 
   // ── Cost card (con CostosOperacion igual que CD/MV/INV) ──
   const macroOpts=getIbMacroCostOptions();
@@ -12401,7 +12405,7 @@ function ibAutoSync(){
 
   if(!S.ibSkuData||!Object.keys(S.ibSkuData).length)return;
   const{dist}=calcIbDistribution();
-  const months=S.ibMonths;
+  const months=getActiveMeses('ib');
   if(!months.length||!Object.keys(dist).length)return;
 
   // Recolectar fórmulas exportables por cluster: {cluster, ...col}
@@ -12476,7 +12480,7 @@ function ibAutoSync(){
 function exportIbResumenXLSX(){
   if(!Object.keys(S.ibSkuData).length){toast('Sin datos','warning');return;}
   const{dist}=calcIbDistribution();
-  const months=S.ibMonths;
+  const months=getActiveMeses('ib');
   const mLabels=months.map(m=>IB_MESES[m.slice(5)]||m);
   const nMX=months.length||1;
   const headers=['Cluster',...mLabels,'Total Líneas','Prom.Líneas/Mes','Total Unidades','Prom.Unid/Mes','Total Recepciones','Prom.Rec/Mes','Distrib.%','$/Línea','Costo Asignado'];
@@ -12507,7 +12511,7 @@ function exportIbClusterXLSX(clusterName){
   const{dist}=calcIbDistribution();
   const r=dist[clusterName];
   if(!r){toast('Cluster no encontrado','warning');return;}
-  const months=S.ibMonths;
+  const months=getActiveMeses('ib');
   const calcCols=ibGetClusterCalcCols(clusterName);
   const nME=months.length||1;
   const headers=['SKU','Descripción','Empresa',...months.map(m=>IB_MESES[m.slice(5)]||m),
