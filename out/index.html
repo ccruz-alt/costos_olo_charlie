@@ -891,6 +891,7 @@ const S = {
   user: null,
   files: {},        // fileId → { id, name, rows, cols, skuCol, clientCol, descCol, calcCols, summaryLinks, fileType }
   filesMeta: {},    // lightweight (no rows) saved to localStorage
+  macroByMonth: {}, // YYYY-MM → [{key, proceso, subproceso, total, vals, rawCols}] — histórico CostosOperacion
   clients: {},      // code → { name, code, pass }
   globalCalcCols: [],
   colVis: {},
@@ -2866,7 +2867,29 @@ function renderMacroTable(){
     const ftd=f.fileType?FILE_TYPES[f.fileType]:null;
     return ftd?.isMacro;
   });
-  if(!macroFiles.length)return'';
+  const hasHistorico=S.macroByMonth&&Object.keys(S.macroByMonth).length>0;
+  if(!macroFiles.length&&!hasHistorico)return'';
+
+  // ── Sección histórico por mes ──────────────────────────────────────────
+  let historicoHtml='';
+  if(hasHistorico){
+    const meses=Object.keys(S.macroByMonth).sort();
+    const activeMeses=new Set(getActiveMacroMeses());
+    const MNAMES={'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'};
+    const fmtMes=m=>{const pp=m.split('-');return(MNAMES[pp[1]]||pp[1])+' '+pp[0];};
+    const chips=meses.map(m=>{
+      const active=activeMeses.has(m);
+      return`<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:${active?'#ccfbf1':'var(--bg3)'};border:1px solid ${active?'#0d9488':'var(--border)'};font-size:11px;font-weight:600;color:${active?'#0d9488':'var(--text2)'}">
+        ${active?'✓ ':''} ${fmtMes(m)}
+        <button onclick="deleteMacroMonth('${m}')" title="Eliminar este mes" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:10px;padding:0 0 0 2px;line-height:1">✕</button>
+      </span>`;
+    }).join('');
+    historicoHtml=`<div style="background:var(--card);border:1px solid #0d948840;border-radius:var(--radius2);padding:12px 16px;margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#0d9488;margin-bottom:8px">📅 HISTÓRICO COSTOS OPERACIÓN — ${meses.length} MES${meses.length!==1?'ES':''} CARGADO${meses.length!==1?'S':''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${chips}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">Los costos de cluster se calculan con el promedio de los meses activos (período seleccionado). Los meses con ✓ están incluidos en el análisis actual.</div>
+    </div>`;
+  }
 
   const COST_COLS=['Personal Almacén','Personal Administracion','Personal externo','Personal OLO 0',
                    'Costo Alquiler','Costo Racks','Automatización','Equipos','Otros Gastos Operativos','Total'];
@@ -2879,7 +2902,8 @@ function renderMacroTable(){
   };
 
   let html=`<div style="margin-top:24px">
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:12px">📊 COSTOS DE REFERENCIA DEL CD</div>`;
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:12px">📊 COSTOS DE REFERENCIA DEL CD</div>
+    ${historicoHtml}`;
 
   for(const f of macroFiles){
     const conn=S.connections.find(c=>c.fileId===f.id);
@@ -3242,9 +3266,9 @@ async function refreshConnection(connId){
     f.rows=raw;
     f.cols=Object.keys(raw[0]);
     conn.lastFetched=Date.now();
-    // Si el archivo actualizado es CostosOperacion (macro), recalcular costos de cluster
+    // Si el archivo actualizado es CostosOperacion (macro), procesar histórico y recalcular
     const connFt=f.fileType?FILE_TYPES[f.fileType]:null;
-    if(connFt?.isMacro)recomputeAllMacroCosts();
+    if(connFt?.isMacro){processMacroFileIntoMonths(raw,Object.keys(raw[0]||{}));recomputeAllMacroCosts();}
     saveState();
     consolidate();
     renderAll();
@@ -4855,6 +4879,8 @@ function refreshMacroData(fid){
         }
         // Guardar filas nuevas en IndexedDB (mismo key = mismo fid)
         idbPut('file_'+fid,{rows:raw,cols:newCols});
+        // Si es macro, procesar histórico por mes antes de recalcular
+        processMacroFileIntoMonths(raw,newCols);
         // Recalcular costos de cluster vinculados a macro ANTES de guardar estado
         recomputeAllMacroCosts();
         saveState();
@@ -5368,6 +5394,8 @@ function getActiveMeses(pfx){
 // Cambia el período globalmente y re-renderiza todos los módulos activos
 function setPeriodo(p){
   S.periodoAnalisis=p;
+  // Recalcular costos de cluster desde histórico macro (si existe) con el nuevo período
+  if(S.macroByMonth&&Object.keys(S.macroByMonth).length>0) recomputeAllMacroCosts();
   saveState();
   renderPeriodoStrip();
   renderOutbound();
@@ -6105,9 +6133,118 @@ function obColVar(name){
     .normalize('NFD').replace(/[̀-ͯ]/g,'')  // strip accents
     .replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
 }
+// ── Helpers histórico CostosOperacion ─────────────────────────────────────
+// Convierte string de mes a formato YYYY-MM
+function parseMesString(s){
+  if(!s)return null;
+  s=String(s).trim();
+  // YYYY-MM
+  if(/^\d{4}-\d{2}$/.test(s))return s;
+  // YYYY-MM-DD
+  if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,7);
+  // MM/YYYY o MM-YYYY
+  const m1=s.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if(m1)return m1[2]+'-'+String(m1[1]).padStart(2,'0');
+  // Nombre mes + año (Jun 2026, Junio 2026, JUN'26 etc.)
+  const MNAMES={'ene':'01','jan':'01','feb':'02','mar':'03','abr':'04','apr':'04','may':'05',
+    'jun':'06','jul':'07','ago':'08','aug':'08','sep':'09','oct':'10','nov':'11','dic':'12','dec':'12'};
+  const m2=s.toLowerCase().match(/([a-záéíóú]+)['\-\s]?(\d{2,4})/);
+  if(m2){
+    const mn=MNAMES[m2[1].slice(0,3)];
+    if(mn){const yr=m2[2].length===2?'20'+m2[2]:m2[2];return yr+'-'+mn;}
+  }
+  // Excel serial date
+  const num=parseFloat(s);
+  if(!isNaN(num)&&num>40000){
+    const d=new Date(Math.round((num-25569)*86400*1000));
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  }
+  return null;
+}
+
+// Retorna los meses activos del histórico macro según S.periodoAnalisis
+function getActiveMacroMeses(){
+  const available=Object.keys(S.macroByMonth||{}).sort();
+  if(!available.length)return[];
+  const p=S.periodoAnalisis||'todos';
+  if(Array.isArray(p))return available.filter(m=>p.includes(m));
+  if(p==='todos')return available;
+  if(p==='ytd'){const yr=new Date().getFullYear().toString();const y=available.filter(m=>m.startsWith(yr));return y.length?y:available;}
+  const n=parseInt(p);
+  if(!isNaN(n)&&n>0)return available.slice(-n);
+  return available;
+}
+
+// Parsea filas crudas del archivo y las almacena en S.macroByMonth por mes
+// Si el archivo tiene columna Mes → histórico; si no → carga como mes único (backwards compat via S.files)
+function processMacroFileIntoMonths(rows,cols){
+  const nc=c=>String(c||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'').replace(/[^a-z0-9]/g,'');
+  const mesCol=cols.find(c=>{const n=nc(c);return n==='mes'||n==='month'||n==='periodo'||n==='fecha';});
+  if(!mesCol)return false; // sin columna Mes → no usar modo histórico
+  const procCol=cols.find(c=>{const n=nc(c);return n==='proceso'||n==='process';});
+  const subCol=cols.find(c=>{const n=nc(c);return n.includes('subproceso')||n.includes('subprocess');});
+  const totalCol=cols.find(c=>nc(c)==='total');
+  const numCols=cols.filter(c=>c!==mesCol&&c!==procCol&&c!==subCol);
+  const newMonths={};
+  rows.forEach(row=>{
+    const mes=parseMesString(String(row[mesCol]||'').trim());
+    if(!mes)return;
+    const proceso=procCol?String(row[procCol]||'').trim():'';
+    const subproceso=subCol?String(row[subCol]||'').trim():'';
+    if(!proceso)return;
+    const key=proceso+'||'+subproceso;
+    const rawCols={};const vals={};
+    numCols.forEach(c=>{
+      const v=parseFloat(String(row[c]||'').replace(/[^0-9.\-]/g,''))||0;
+      rawCols[c]=v;vals[obColVar(c)]=v;
+    });
+    const total=totalCol?rawCols[totalCol]:(Object.values(rawCols).reduce((s,v)=>s+v,0));
+    if(!newMonths[mes])newMonths[mes]=[];
+    newMonths[mes].push({key,proceso,subproceso,total,vals,rawCols});
+  });
+  if(!Object.keys(newMonths).length)return false;
+  // Merge: los meses del nuevo archivo reemplazan (update) los existentes
+  Object.assign(S.macroByMonth,newMonths);
+  return true;
+}
+
+// Eliminar un mes del histórico
+function deleteMacroMonth(mes){
+  if(!confirm('¿Eliminar costos de '+mes+' del histórico?'))return;
+  delete S.macroByMonth[mes];
+  recomputeAllMacroCosts();
+  saveState();
+  renderAll();
+  toast('Mes '+mes+' eliminado del histórico','success');
+}
+
 // Read every row from the macro (CostosOperacion) file
+// Si macroByMonth tiene datos: devuelve promedio de los meses activos
+// Si no: lee desde S.files (modo legado)
 // Returns [{key, proceso, subproceso, total, vals:{varName: number}, rawCols:{colName: number}}]
 function getObMacroRows(){
+  // ── Modo histórico ─────────────────────────────────────────────────────
+  if(S.macroByMonth&&Object.keys(S.macroByMonth).length>0){
+    const activeMeses=getActiveMacroMeses();
+    if(!activeMeses.length)return[];
+    const n=activeMeses.length;
+    const merged={};
+    activeMeses.forEach(mes=>{
+      (S.macroByMonth[mes]||[]).forEach(r=>{
+        if(!merged[r.key]){merged[r.key]={key:r.key,proceso:r.proceso,subproceso:r.subproceso,total:0,vals:{},rawCols:{}};}
+        merged[r.key].total+=r.total;
+        Object.entries(r.vals).forEach(([k,v])=>{merged[r.key].vals[k]=(merged[r.key].vals[k]||0)+v;});
+        Object.entries(r.rawCols).forEach(([k,v])=>{merged[r.key].rawCols[k]=(merged[r.key].rawCols[k]||0)+v;});
+      });
+    });
+    return Object.values(merged).map(r=>({
+      ...r,
+      total:r.total/n,
+      vals:Object.fromEntries(Object.entries(r.vals).map(([k,v])=>[k,v/n])),
+      rawCols:Object.fromEntries(Object.entries(r.rawCols).map(([k,v])=>[k,v/n])),
+    }));
+  }
+  // ── Modo legado: leer desde S.files ────────────────────────────────────
   const fid=Object.keys(S.files).find(f=>{const ft=S.files[f]?.fileType;return ft&&FILE_TYPES[ft]?.isMacro;});
   if(!fid||!S.files[fid]?.rows?.length)return[];
   const f=S.files[fid];
